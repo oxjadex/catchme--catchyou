@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>알아줘내맘</title>
+    <style>
+      body {
+        font-family: "DOSIyagiBoldface", sans-serif;
+        display: flex;
+        margin: 0;
+        padding: 0;
+        height: 100vh;
+      }
+      #sidebar {
+        width: 250px;
+        background-color: #f0f0f0;
+        padding: 20px;
+        border-right: 1px solid #ccc;
+        display: flex;
+        flex-direction: column;
+      }
+      #canvas-container {
+        flex-grow: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background-color: #f9f9f9;
+        position: relative;
+      }
+      #drawing-canvas {
+        border: 2px solid #333;
+        background-color: white;
+      }
+      #tools {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      #color-picker,
+      #line-width {
+        margin-right: 10px;
+      }
+      #players-list {
+        list-style-type: none;
+        padding: 0;
+      }
+      #players-list li {
+        margin-bottom: 10px;
+        padding: 10px;
+        background-color: #e0e0e0;
+      }
+      #current-drawer {
+        font-weight: bold;
+        color: green;
+      }
+      #chat-container {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(0, 0, 0, 0.15);
+        padding: 10px;
+        display: flex;
+      }
+      #messages {
+        list-style-type: none;
+        margin: 0;
+        padding: 0;
+        max-height: 200px;
+        overflow-y: auto;
+        margin-bottom: 10px;
+      }
+      #chat-input {
+        flex-grow: 1;
+        margin-right: 10px;
+        padding: 5px;
+      }
+      #chat-form {
+        display: flex;
+        width: 100%;
+      }
+      #game-info {
+        text-align: center;
+        margin: 10px 0;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar">
+      <div id="tools">
+        <input type="color" id="color-picker" value="#000000" />
+        <input type="range" id="line-width" min="1" max="20" value="5" />
+        <button id="clear-btn">Clear</button>
+      </div>
+      <ul id="players-list"></ul>
+      <div id="game-status"></div>
+      <div id="game-info"></div>
+    </div>
+    <div id="canvas-container">
+      <canvas id="drawing-canvas" width="800" height="600"></canvas>
+      <div id="chat-container">
+        <ul id="messages"></ul>
+        <form id="chat-form">
+          <input
+            id="username"
+            placeholder="Enter your name"
+            autocomplete="off"
+          />
+          <input
+            id="chat-input"
+            autocomplete="off"
+            placeholder="Type a message"
+            disabled
+          />
+          <button type="submit" disabled>Send</button>
+        </form>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+      const canvas = document.getElementById("drawing-canvas");
+      const ctx = canvas.getContext("2d");
+      const colorPicker = document.getElementById("color-picker");
+      const lineWidth = document.getElementById("line-width");
+      const clearBtn = document.getElementById("clear-btn");
+      const playersList = document.getElementById("players-list");
+      const gameStatus = document.getElementById("game-status");
+      const gameInfo = document.getElementById("game-info");
+
+      const chatForm = document.getElementById("chat-form");
+      const usernameInput = document.getElementById("username");
+      const chatInput = document.getElementById("chat-input");
+      const chatButton = chatForm.querySelector("button");
+      const messages = document.getElementById("messages");
+
+      let drawing = false;
+      let players = [];
+      let currentDrawer = null;
+      let isDrawerMode = false;
+      let username = "";
+
+      function startDrawing(e) {
+        if (!isDrawerMode) return;
+        drawing = true;
+        draw(e);
+      }
+
+      function stopDrawing() {
+        if (!isDrawerMode) return;
+        drawing = false;
+        ctx.beginPath();
+      }
+
+      function draw(e) {
+        if (!drawing || !isDrawerMode) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        ctx.lineWidth = lineWidth.value;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = colorPicker.value;
+
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+
+        socket.emit("drawing", {
+          x,
+          y,
+          color: colorPicker.value,
+          lineWidth: lineWidth.value,
+        });
+      }
+
+      usernameInput.addEventListener("change", () => {
+        username = usernameInput.value.trim();
+        if (username) {
+          usernameInput.disabled = true;
+          chatInput.disabled = false;
+          chatButton.disabled = false;
+        }
+      });
+
+      chatForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (chatInput.value && username) {
+          const message = { username, text: chatInput.value };
+          socket.emit("chat message", message);
+          chatInput.value = "";
+        }
+      });
+
+      socket.on("drawing", (data) => {
+        ctx.beginPath();
+        ctx.lineWidth = data.lineWidth;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = data.color;
+        ctx.lineTo(data.x, data.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(data.x, data.y);
+      });
+
+      socket.on("chat message", (message) => {
+        const item = document.createElement("li");
+        item.textContent = `${message.username}: ${message.text}`;
+        messages.appendChild(item);
+        messages.scrollTop = messages.scrollHeight;
+      });
+
+      socket.on("new-round", (data) => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      });
+
+      socket.on("game-won", (data) => {
+        const item = document.createElement("li");
+        item.textContent = `🎉 ${data.winner}님이 "${data.keyword}"를 맞추셨습니다!`;
+        item.style.color = "green";
+        item.style.fontWeight = "bold";
+        messages.appendChild(item);
+        messages.scrollTop = messages.scrollHeight;
+      });
+
+      canvas.addEventListener("mousedown", startDrawing);
+      canvas.addEventListener("mousemove", draw);
+      canvas.addEventListener("mouseup", stopDrawing);
+      canvas.addEventListener("mouseout", stopDrawing);
+
+      clearBtn.addEventListener("click", () => {
+        if (isDrawerMode) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          socket.emit("clear-canvas");
+        }
+      });
+
+      socket.on("clear-canvas", () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      });
+
+      socket.on("update-players", (playerData) => {
+        players = playerData.players;
+        currentDrawer = playerData.currentDrawer;
+
+        playersList.innerHTML = "";
+        players.forEach((player) => {
+          const li = document.createElement("li");
+          li.textContent = player.username;
+          if (player.id === currentDrawer) {
+            li.classList.add("current-drawer");
+            li.textContent += " (Drawing)";
+          }
+          playersList.appendChild(li);
+        });
+
+        isDrawerMode = socket.id === currentDrawer;
+
+        gameStatus.textContent = isDrawerMode
+          ? "키워드에 맞는 그림을 그려주세요!"
+          : "키워드를 맞추세요!";
+
+        gameInfo.textContent = isDrawerMode
+          ? `키워드: ${playerData.keyword || "알 수 없음"}`
+          : "🎐Tip: 가장 먼저 맞춘 사람은 승리자가 됩니다!";
+      });
+    </script>
+  </body>
+</html>
